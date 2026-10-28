@@ -1,0 +1,92 @@
+name: Lootix APK derle
+
+# istek.txt değişince çalışır. Kod gizli `lootix` deposundan LOOTIX_TOKEN ile alınır.
+# Derleme çıktısı bu açık kayıtlara yazılmaz; gizli depodaki `derleme-gunlugu` dalına gider.
+on:
+  push:
+    branches: [main]
+    paths: ['istek.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lootix-derle
+  cancel-in-progress: false
+
+jobs:
+  derle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OUT_DIR: ${{ github.workspace }}/cikti
+      RUN_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
+        with:
+          repository: altintv-creator/lootix
+          token: ${{ secrets.LOOTIX_TOKEN }}
+          path: src
+          fetch-depth: 1
+
+      - name: Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: '3.35.x'
+          cache: true
+
+      - name: Derle
+        working-directory: src
+        run: |
+          set -o pipefail
+          bash tool/ci_build.sh > "$GITHUB_WORKSPACE/derleme.log" 2>&1
+
+      - name: android klasörünü gizli depoya kaydet
+        if: success() && hashFiles('cikti/android-yeni') != ''
+        working-directory: src
+        run: |
+          git config user.name "lootix-derleme"
+          git config user.email "derleme@users.noreply.github.com"
+          git add android .metadata || git add android
+          git commit -m "Derleme: android klasörü oluşturuldu [derleme ${RUN_NUMBER}]" || echo "değişiklik yok"
+          git push origin HEAD:main
+
+      - name: Günlüğü gizli depoya yaz
+        if: always()
+        env:
+          TOKEN: ${{ secrets.LOOTIX_TOKEN }}
+          DURUM: ${{ job.status }}
+        run: |
+          mkdir -p /tmp/gunluk && cd /tmp/gunluk
+          git init -q
+          cp "$GITHUB_WORKSPACE/derleme.log" . 2>/dev/null || echo "günlük oluşmadı" > derleme.log
+          printf 'derleme: %s\ndurum: %s\nkaynak: %s\n' "$RUN_NUMBER" "$DURUM" "$(git -C "$GITHUB_WORKSPACE/src" rev-parse HEAD 2>/dev/null)" > durum.txt
+          git add .
+          git -c user.name=lootix-derleme -c user.email=derleme@users.noreply.github.com commit -qm "Derleme ${RUN_NUMBER}: ${DURUM}"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/altintv-creator/lootix.git" HEAD:derleme-gunlugu
+
+      - name: Sürümü oku
+        if: success()
+        id: surum
+        run: echo "ad=$(cat cikti/surum.txt)" >> "$GITHUB_OUTPUT"
+
+      - name: Yayınla
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.surum.outputs.ad }}
+          name: Lootix ${{ steps.surum.outputs.ad }}
+          body_path: cikti/notlar.md
+          make_latest: true
+          files: |
+            cikti/lootix.apk
+            cikti/latest.json
