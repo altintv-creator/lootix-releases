@@ -1,0 +1,81 @@
+name: Lootix 3B render
+
+# render-istek.txt değişince çalışır (APK derlemesini TETİKLEMEZ).
+# Sahne betikleri gizli `lootix` deposunda (tool/render/*.py). Blender önbellekte tutulur.
+# Çıktı PNG'ler bu açık depoya YAZILMAZ: gizli depodaki `render-cikti` dalına tek commit olarak
+# (her seferinde üzerine) yazılır; böylece depo büyümez.
+on:
+  push:
+    branches: [main]
+    paths: ['render-istek.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lootix-render
+  cancel-in-progress: true
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      BLENDER_VER: '4.5.16'
+    steps:
+      - name: İsteği al
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: render-istek.txt
+          sparse-checkout-cone-mode: false
+
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
+        with:
+          repository: altintv-creator/lootix
+          token: ${{ secrets.LOOTIX_TOKEN }}
+          path: src
+          fetch-depth: 1
+
+      - name: Blender önbelleği
+        id: bcache
+        uses: actions/cache@v4
+        with:
+          path: ~/blender
+          key: blender-${{ env.BLENDER_VER }}-linux-x64
+
+      - name: Blender indir
+        if: steps.bcache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/blender
+          curl -fsSL "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VER}-linux-x64.tar.xz" -o /tmp/b.tar.xz
+          tar -xf /tmp/b.tar.xz -C ~/blender --strip-components=1
+          rm /tmp/b.tar.xz
+
+      - name: Sistem kütüphaneleri
+        run: sudo apt-get install -y -qq libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0 libsm6 > /dev/null
+
+      - name: Render
+        working-directory: src
+        run: |
+          set -o pipefail
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          SAHNE=$(head -n1 "$GITHUB_WORKSPACE/render-istek.txt" | awk '{print $1}')
+          echo "sahne: $SAHNE" | tee "$GITHUB_WORKSPACE/out/render.log"
+          ~/blender/blender -b --factory-startup -noaudio \
+            --python "tool/render/${SAHNE}.py" -- "$GITHUB_WORKSPACE/out" 2>&1 \
+            | grep -v -E '^(Fra:|Saved:)' | tail -n 200 >> "$GITHUB_WORKSPACE/out/render.log"
+
+      - name: Çıktıyı gizli depoya yaz
+        if: always()
+        env:
+          TOKEN: ${{ secrets.LOOTIX_TOKEN }}
+          DURUM: ${{ job.status }}
+        run: |
+          cd "$GITHUB_WORKSPACE/out" 2>/dev/null || { mkdir -p "$GITHUB_WORKSPACE/out"; cd "$GITHUB_WORKSPACE/out"; }
+          echo "durum: $DURUM" >> render.log
+          git init -q
+          git add .
+          git -c user.name=lootix-render -c user.email=render@users.noreply.github.com commit -qm "Render ${{ github.run_number }}: ${DURUM}"
+          git push -qf "https://x-access-token:${TOKEN}@github.com/altintv-creator/lootix.git" HEAD:render-cikti
