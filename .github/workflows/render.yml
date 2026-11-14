@@ -20,7 +20,7 @@ concurrency:
 jobs:
   render:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
     env:
       BLENDER_VER: '4.5.16'
     steps:
@@ -62,9 +62,10 @@ jobs:
           set -o pipefail
           mkdir -p "$GITHUB_WORKSPACE/out"
           SAHNE=$(head -n1 "$GITHUB_WORKSPACE/render-istek.txt" | awk '{print $1}')
-          echo "sahne: $SAHNE" | tee "$GITHUB_WORKSPACE/out/render.log"
+          ARGS=$(sed -n 2p "$GITHUB_WORKSPACE/render-istek.txt")
+          echo "sahne: $SAHNE $ARGS" | tee "$GITHUB_WORKSPACE/out/render.log"
           ~/blender/blender -b --factory-startup -noaudio \
-            --python "tool/render/${SAHNE}.py" -- "$GITHUB_WORKSPACE/out" 2>&1 \
+            --python "tool/render/${SAHNE}.py" -- "$GITHUB_WORKSPACE/out" $ARGS 2>&1 \
             | grep -v -E '^(Fra:|Saved:)' | tail -n 200 >> "$GITHUB_WORKSPACE/out/render.log"
 
       - name: Çıktıyı gizli depoya yaz

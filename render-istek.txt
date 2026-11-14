@@ -1,1 +1,2 @@
-bulut_adasi 5
+parcalar #1
+
